@@ -19,7 +19,7 @@ const VolumeScanner: React.FC = () => {
   const [retryCount, setRetryCount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
 
-  const WS_URL = 'wss://delayed.polygon.io/crypto';
+  const WS_URL = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
   const {
@@ -45,7 +45,7 @@ const VolumeScanner: React.FC = () => {
       setTimeout(() => {
         sendMessage(JSON.stringify({ 
           action: "subscribe", 
-          params: "T.*"  // Subscribe to all trades
+          params: "XT.*"  // Subscribe to all crypto trades
         }));
       }, 1000);
     },
@@ -92,21 +92,21 @@ const VolumeScanner: React.FC = () => {
     if (!data || typeof data !== 'object') return;
     
     try {
-      // Handle trade events
-      if (data.ev === 'T') {
+      // Handle crypto events
+      if (data.ev === 'XT') {
         const ticker = data.pair;
-        const currentVolume = data.s * data.p; // size * price
+        const currentVolume = data.v * data.p; // volume * price
         const baselineVolume = baselineVolumes[ticker] || currentVolume;
 
         // Calculate relative volume
         const relativeVolume = currentVolume / baselineVolume;
 
-        // Alert criteria: 2x volume spike and 5% price change
+        // Alert criteria: 2x volume spike and price movement
         if (relativeVolume >= 2) {
           const newAlert: Alert = {
             ticker,
             price: data.p,
-            changePercent: ((data.p - baselineVolume) / baselineVolume) * 100,
+            changePercent: data.dp || 0,
             relativeVolume,
             timestamp: new Date(),
           };
@@ -122,7 +122,6 @@ const VolumeScanner: React.FC = () => {
       }
     } catch (err) {
       console.error('Error processing message:', err);
-      setError('Failed to process incoming data');
     }
   }, [baselineVolumes]);
 
@@ -208,7 +207,7 @@ const VolumeScanner: React.FC = () => {
                   <div className="flex flex-col items-center space-y-2">
                     <AlertTriangle className="text-yellow-500" size={24} />
                     <p>Waiting for alerts...</p>
-                    <p className="text-sm text-gray-500">Monitoring for 2x volume and significant price movement</p>
+                    <p className="text-sm text-gray-500">Monitoring for 2x volume spikes and price movement</p>
                   </div>
                 </td>
               </tr>
