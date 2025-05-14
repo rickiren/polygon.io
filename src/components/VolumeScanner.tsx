@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import useWebSocket from 'react-use-websocket';
+import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { AlertTriangle, Volume2 } from 'lucide-react';
 import { formatCurrency, formatPercent } from '../services/polygonService';
 
@@ -17,80 +17,101 @@ const VolumeScanner: React.FC = () => {
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
 
-  // Add wss:// prefix and ensure proper URL format
-  const WS_URL = 'wss://socket.polygon.io/crypto';
+  const WS_URL = 'wss://delayed.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
-  const { sendMessage, lastMessage, readyState } = useWebSocket(WS_URL, {
+  const {
+    sendMessage,
+    lastMessage,
+    readyState,
+    getWebSocket
+  } = useWebSocket(WS_URL, {
     onOpen: () => {
       console.log('WebSocket Connected');
       setIsConnected(true);
       setError(null);
       setRetryCount(0);
-      try {
-        // Authenticate with proper message format
-        sendMessage(JSON.stringify({
-          action: 'auth',
-          params: API_KEY
+      setConnectionStatus('Connected');
+      
+      // Authenticate
+      sendMessage(JSON.stringify({ 
+        action: "auth", 
+        params: API_KEY
+      }));
+
+      // Subscribe after a short delay to ensure auth is processed
+      setTimeout(() => {
+        sendMessage(JSON.stringify({ 
+          action: "subscribe", 
+          params: "T.*"  // Subscribe to all trades
         }));
-        
-        // Subscribe after successful authentication
-        setTimeout(() => {
-          sendMessage(JSON.stringify({
-            action: 'subscribe',
-            params: 'XT.*'
-          }));
-        }, 1000); // Wait 1 second after auth before subscribing
-      } catch (err) {
-        console.error('Error during WebSocket authentication:', err);
-        setError('Failed to authenticate with Polygon.io');
-        setIsConnected(false);
-      }
+      }, 1000);
     },
     onClose: () => {
       console.log('WebSocket Disconnected');
       setIsConnected(false);
+      setConnectionStatus('Disconnected');
       setError('Connection closed. Attempting to reconnect...');
     },
     onError: (event) => {
       console.error('WebSocket error:', event);
       setError('Connection error occurred. Please check your internet connection.');
       setIsConnected(false);
+      setConnectionStatus('Error');
       setRetryCount(prev => prev + 1);
     },
-    shouldReconnect: (closeEvent) => {
-      return retryCount < 5; // Limit retry attempts
+    onMessage: (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        // Handle authentication success
+        if (data.ev === 'status' && data.status === 'auth_success') {
+          console.log('Authentication successful');
+          setConnectionStatus('Authenticated');
+          return;
+        }
+        
+        // Handle subscription success
+        if (data.ev === 'status' && data.status === 'success') {
+          console.log('Subscription successful');
+          return;
+        }
+      } catch (err) {
+        console.error('Error parsing message:', err);
+      }
     },
-    reconnectInterval: (attemptNumber) => 
-      Math.min(1000 * Math.pow(2, attemptNumber), 10000), // Exponential backoff
+    shouldReconnect: (closeEvent) => retryCount < 5,
+    reconnectInterval: (attemptNumber) => Math.min(1000 * Math.pow(2, attemptNumber), 10000),
     reconnectAttempts: 5,
-    filter: () => true, // Accept all messages
+    share: true
   });
 
   const processMessage = useCallback((data: any) => {
-    if (!data) return;
+    if (!data || typeof data !== 'object') return;
     
     try {
-      if (data.ev === 'XT') {
+      // Handle trade events
+      if (data.ev === 'T') {
         const ticker = data.pair;
-        const currentVolume = data.v * data.p;
+        const currentVolume = data.s * data.p; // size * price
         const baselineVolume = baselineVolumes[ticker] || currentVolume;
 
         // Calculate relative volume
         const relativeVolume = currentVolume / baselineVolume;
 
-        // Check if meets alert criteria
-        if (relativeVolume >= 2 && data.dp >= 5) {
+        // Alert criteria: 2x volume spike and 5% price change
+        if (relativeVolume >= 2) {
           const newAlert: Alert = {
             ticker,
             price: data.p,
-            changePercent: data.dp,
+            changePercent: ((data.p - baselineVolume) / baselineVolume) * 100,
             relativeVolume,
             timestamp: new Date(),
           };
 
-          setAlerts(prev => [newAlert, ...prev].slice(0, 50)); // Keep last 50 alerts
+          setAlerts(prev => [newAlert, ...prev].slice(0, 50));
         }
 
         // Update baseline volume
@@ -116,7 +137,6 @@ const VolumeScanner: React.FC = () => {
         }
       } catch (err) {
         console.error('Error processing message:', err);
-        setError('Failed to process incoming data');
       }
     }
   }, [lastMessage, processMessage]);
@@ -124,8 +144,19 @@ const VolumeScanner: React.FC = () => {
   const handleRetryConnection = () => {
     setRetryCount(0);
     setError(null);
-    // The WebSocket will automatically reconnect due to shouldReconnect being true
+    const ws = getWebSocket();
+    if (ws) {
+      ws.close();
+    }
   };
+
+  const connectionStatusColor = {
+    'Connected': 'bg-green-400',
+    'Authenticated': 'bg-blue-400',
+    'Disconnected': 'bg-red-400',
+    'Error': 'bg-yellow-400',
+    'Connecting...': 'bg-gray-400'
+  }[connectionStatus] || 'bg-gray-400';
 
   return (
     <div className="bg-gray-900 rounded-lg shadow-xl border border-gray-800 overflow-hidden">
@@ -135,8 +166,8 @@ const VolumeScanner: React.FC = () => {
           <h2 className="text-lg font-semibold text-white">Volume Scanner</h2>
         </div>
         <div className="flex items-center space-x-2">
-          <span className={`inline-block h-2 w-2 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`}></span>
-          <span className="text-sm text-gray-400">{isConnected ? 'Connected' : 'Disconnected'}</span>
+          <span className={`inline-block h-2 w-2 rounded-full ${connectionStatusColor} animate-pulse`}></span>
+          <span className="text-sm text-gray-400">{connectionStatus}</span>
         </div>
       </div>
 
@@ -177,7 +208,7 @@ const VolumeScanner: React.FC = () => {
                   <div className="flex flex-col items-center space-y-2">
                     <AlertTriangle className="text-yellow-500" size={24} />
                     <p>Waiting for alerts...</p>
-                    <p className="text-sm text-gray-500">Monitoring for 2x volume and 5% gains in 10 minutes</p>
+                    <p className="text-sm text-gray-500">Monitoring for 2x volume and significant price movement</p>
                   </div>
                 </td>
               </tr>
