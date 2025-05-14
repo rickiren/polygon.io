@@ -35,18 +35,46 @@ const VolumeScanner: React.FC = () => {
       setRetryCount(0);
       setConnectionStatus('Connected');
       
-      // Authenticate
+      // Ensure WebSocket is ready before sending messages
+      const ws = getWebSocket();
+      if (!ws) {
+        console.warn('WebSocket not yet ready, retrying in 500ms');
+        setTimeout(() => {
+          const retryWs = getWebSocket();
+          if (retryWs) {
+            // Authenticate
+            sendMessage(JSON.stringify({ 
+              action: "auth", 
+              params: API_KEY
+            }));
+
+            // Subscribe after auth
+            setTimeout(() => {
+              sendMessage(JSON.stringify({ 
+                action: "subscribe", 
+                params: "XT.*"  // Subscribe to all crypto trades
+              }));
+            }, 1000);
+          } else {
+            setError('Failed to establish WebSocket connection');
+          }
+        }, 500);
+        return;
+      }
+
+      // If WebSocket is ready, proceed with auth and subscription
       sendMessage(JSON.stringify({ 
         action: "auth", 
         params: API_KEY
       }));
 
-      // Subscribe after a short delay to ensure auth is processed
       setTimeout(() => {
-        sendMessage(JSON.stringify({ 
-          action: "subscribe", 
-          params: "XT.*"  // Subscribe to all crypto trades
-        }));
+        if (getWebSocket()) {
+          sendMessage(JSON.stringify({ 
+            action: "subscribe", 
+            params: "XT.*"  // Subscribe to all crypto trades
+          }));
+        }
       }, 1000);
     },
     onClose: () => {
