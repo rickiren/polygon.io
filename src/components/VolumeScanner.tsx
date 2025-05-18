@@ -9,6 +9,7 @@ interface Alert {
   changePercent: number;
   relativeVolume: number;
   timestamp: Date;
+  type: 'volume' | 'high';
 }
 
 const VolumeScanner: React.FC = () => {
@@ -16,7 +17,6 @@ const VolumeScanner: React.FC = () => {
     const savedAlerts = localStorage.getItem('volumeAlerts');
     if (savedAlerts) {
       try {
-        // Parse stored alerts and convert timestamp strings back to Date objects
         return JSON.parse(savedAlerts).map((alert: any) => ({
           ...alert,
           timestamp: new Date(alert.timestamp)
@@ -31,6 +31,7 @@ const VolumeScanner: React.FC = () => {
   
   const [isConnected, setIsConnected] = useState(false);
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
+  const [dailyHighs, setDailyHighs] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
@@ -51,7 +52,6 @@ const VolumeScanner: React.FC = () => {
       setRetryCount(0);
       setConnectionStatus('Connected');
 
-      // Wait briefly before sending messages to avoid readiness issues
       setTimeout(() => {
         if (isSocketOpen()) {
           sendMessage(JSON.stringify({
@@ -114,7 +114,6 @@ const VolumeScanner: React.FC = () => {
     return ws && ws.readyState === WebSocket.OPEN;
   };
 
-  // Save alerts to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
   }, [alerts]);
@@ -125,17 +124,43 @@ const VolumeScanner: React.FC = () => {
     try {
       if (data.ev === 'XT') {
         const ticker = data.pair;
+        const currentPrice = data.p;
         const currentVolume = data.v * data.p;
         const baselineVolume = baselineVolumes[ticker] || currentVolume;
         const relativeVolume = currentVolume / baselineVolume;
+        const previousHigh = dailyHighs[ticker] || 0;
 
+        let shouldAddAlert = false;
+        let alertType: 'volume' | 'high' = 'volume';
+
+        // Check for volume spike
         if (relativeVolume >= 2) {
+          shouldAddAlert = true;
+          alertType = 'volume';
+        }
+
+        // Check for new daily high
+        if (currentPrice > previousHigh && previousHigh !== 0) {
+          shouldAddAlert = true;
+          alertType = 'high';
+        }
+
+        // Update daily high if needed
+        if (currentPrice > previousHigh) {
+          setDailyHighs(prev => ({
+            ...prev,
+            [ticker]: currentPrice
+          }));
+        }
+
+        if (shouldAddAlert) {
           const newAlert: Alert = {
             ticker,
-            price: data.p,
+            price: currentPrice,
             changePercent: data.dp || 0,
             relativeVolume,
             timestamp: new Date(),
+            type: alertType
           };
 
           setAlerts(prev => [newAlert, ...prev].slice(0, 50));
@@ -149,7 +174,7 @@ const VolumeScanner: React.FC = () => {
     } catch (err) {
       console.error('Error processing message:', err);
     }
-  }, [baselineVolumes]);
+  }, [baselineVolumes, dailyHighs]);
 
   useEffect(() => {
     if (lastMessage?.data) {
@@ -233,6 +258,7 @@ const VolumeScanner: React.FC = () => {
           <thead className="bg-gray-800">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Type</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Ticker</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Price</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Change %</th>
@@ -242,11 +268,11 @@ const VolumeScanner: React.FC = () => {
           <tbody className="divide-y divide-gray-800">
             {alerts.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                   <div className="flex flex-col items-center space-y-2">
                     <AlertTriangle className="text-yellow-500" size={24} />
                     <p>Waiting for alerts...</p>
-                    <p className="text-sm text-gray-500">Monitoring for 2x volume spikes and price movement</p>
+                    <p className="text-sm text-gray-500">Monitoring for volume spikes and new daily highs</p>
                   </div>
                 </td>
               </tr>
@@ -258,6 +284,13 @@ const VolumeScanner: React.FC = () => {
                 >
                   <td className="px-4 py-3 text-sm text-gray-300">
                     {alert.timestamp.toLocaleTimeString()}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                      alert.type === 'volume' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
+                    }`}>
+                      {alert.type === 'volume' ? 'Volume' : 'New High'}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-mono font-medium text-white">{alert.ticker}</span>
