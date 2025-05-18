@@ -22,6 +22,11 @@ const VolumeScanner: React.FC = () => {
   const WS_URL = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
+  const isSocketOpen = () => {
+    const ws = getWebSocket();
+    return ws && ws.readyState === WebSocket.OPEN;
+  };
+
   const {
     sendMessage,
     lastMessage,
@@ -50,10 +55,14 @@ const VolumeScanner: React.FC = () => {
 
             // Subscribe after auth
             setTimeout(() => {
-              sendMessage(JSON.stringify({ 
-                action: "subscribe", 
-                params: "XT.*"  // Subscribe to all crypto trades
-              }));
+              if (isSocketOpen()) {
+                sendMessage(JSON.stringify({ 
+                  action: "subscribe", 
+                  params: "XT.*"
+                }));
+              } else {
+                console.warn('WebSocket still not ready after retry');
+              }
             }, 1000);
           } else {
             setError('Failed to establish WebSocket connection');
@@ -69,11 +78,13 @@ const VolumeScanner: React.FC = () => {
       }));
 
       setTimeout(() => {
-        if (getWebSocket()) {
+        if (isSocketOpen()) {
           sendMessage(JSON.stringify({ 
             action: "subscribe", 
-            params: "XT.*"  // Subscribe to all crypto trades
+            params: "XT.*"
           }));
+        } else {
+          console.warn('WebSocket not ready during delayed subscribe');
         }
       }, 1000);
     },
