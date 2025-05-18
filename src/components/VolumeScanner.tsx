@@ -13,6 +13,42 @@ interface Alert {
 }
 
 const VolumeScanner: React.FC = () => {
+  // Generate sample alerts
+  const sampleAlerts: Alert[] = [
+    {
+      ticker: 'X:BTCUSD',
+      price: 65432.10,
+      changePercent: 5.43,
+      relativeVolume: 3.2,
+      timestamp: new Date(Date.now() - 30000), // 30 seconds ago
+      type: 'volume'
+    },
+    {
+      ticker: 'X:ETHUSD',
+      price: 3456.78,
+      changePercent: 8.21,
+      relativeVolume: 1.5,
+      timestamp: new Date(Date.now() - 60000), // 1 minute ago
+      type: 'high'
+    },
+    {
+      ticker: 'X:SOLUSD',
+      price: 123.45,
+      changePercent: 12.34,
+      relativeVolume: 4.1,
+      timestamp: new Date(Date.now() - 120000), // 2 minutes ago
+      type: 'volume'
+    },
+    {
+      ticker: 'X:DOGEUSD',
+      price: 0.12345,
+      changePercent: 15.67,
+      relativeVolume: 2.8,
+      timestamp: new Date(Date.now() - 180000), // 3 minutes ago
+      type: 'high'
+    }
+  ];
+
   const [alerts, setAlerts] = useState<Alert[]>(() => {
     const savedAlerts = localStorage.getItem('volumeAlerts');
     if (savedAlerts) {
@@ -23,10 +59,10 @@ const VolumeScanner: React.FC = () => {
         }));
       } catch (err) {
         console.error('Error loading saved alerts:', err);
-        return [];
+        return sampleAlerts; // Use sample alerts if there's an error
       }
     }
-    return [];
+    return sampleAlerts; // Use sample alerts if no saved alerts
   });
   
   const [isConnected, setIsConnected] = useState(false);
@@ -38,6 +74,11 @@ const VolumeScanner: React.FC = () => {
 
   const WS_URL = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
+
+  const isSocketOpen = () => {
+    const ws = getWebSocket();
+    return ws && ws.readyState === WebSocket.OPEN;
+  };
 
   const {
     sendMessage,
@@ -108,11 +149,6 @@ const VolumeScanner: React.FC = () => {
     reconnectAttempts: 5,
     share: true
   });
-
-  const isSocketOpen = () => {
-    const ws = getWebSocket();
-    return ws && ws.readyState === WebSocket.OPEN;
-  };
 
   useEffect(() => {
     localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
