@@ -22,11 +22,6 @@ const VolumeScanner: React.FC = () => {
   const WS_URL = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
-  const isSocketOpen = () => {
-    const ws = getWebSocket();
-    return ws && ws.readyState === WebSocket.OPEN;
-  };
-
   const {
     sendMessage,
     lastMessage,
@@ -39,54 +34,29 @@ const VolumeScanner: React.FC = () => {
       setError(null);
       setRetryCount(0);
       setConnectionStatus('Connected');
-      
-      // Ensure WebSocket is ready before sending messages
-      const ws = getWebSocket();
-      if (!ws) {
-        console.warn('WebSocket not yet ready, retrying in 500ms');
-        setTimeout(() => {
-          const retryWs = getWebSocket();
-          if (retryWs) {
-            // Authenticate
-            sendMessage(JSON.stringify({ 
-              action: "auth", 
-              params: API_KEY
-            }));
 
-            // Subscribe after auth
-            setTimeout(() => {
-              if (isSocketOpen()) {
-                sendMessage(JSON.stringify({ 
-                  action: "subscribe", 
-                  params: "XT.*"
-                }));
-              } else {
-                console.warn('WebSocket still not ready after retry');
-              }
-            }, 1000);
-          } else {
-            setError('Failed to establish WebSocket connection');
-          }
-        }, 500);
-        return;
-      }
-
-      // If WebSocket is ready, proceed with auth and subscription
-      sendMessage(JSON.stringify({ 
-        action: "auth", 
-        params: API_KEY
-      }));
-
+      // Wait briefly before sending messages to avoid readiness issues
       setTimeout(() => {
         if (isSocketOpen()) {
-          sendMessage(JSON.stringify({ 
-            action: "subscribe", 
-            params: "XT.*"
+          sendMessage(JSON.stringify({
+            action: 'auth',
+            params: API_KEY,
           }));
+
+          setTimeout(() => {
+            if (isSocketOpen()) {
+              sendMessage(JSON.stringify({
+                action: 'subscribe',
+                params: 'XT.*',
+              }));
+            } else {
+              console.warn('WebSocket not ready at subscription');
+            }
+          }, 500);
         } else {
-          console.warn('WebSocket not ready during delayed subscribe');
+          console.warn('WebSocket not ready at auth');
         }
-      }, 1000);
+      }, 500);
     },
     onClose: () => {
       console.log('WebSocket Disconnected');
@@ -104,15 +74,11 @@ const VolumeScanner: React.FC = () => {
     onMessage: (event) => {
       try {
         const data = JSON.parse(event.data);
-        
-        // Handle authentication success
         if (data.ev === 'status' && data.status === 'auth_success') {
           console.log('Authentication successful');
           setConnectionStatus('Authenticated');
           return;
         }
-        
-        // Handle subscription success
         if (data.ev === 'status' && data.status === 'success') {
           console.log('Subscription successful');
           return;
@@ -121,26 +87,27 @@ const VolumeScanner: React.FC = () => {
         console.error('Error parsing message:', err);
       }
     },
-    shouldReconnect: (closeEvent) => retryCount < 5,
+    shouldReconnect: () => retryCount < 5,
     reconnectInterval: (attemptNumber) => Math.min(1000 * Math.pow(2, attemptNumber), 10000),
     reconnectAttempts: 5,
     share: true
   });
 
+  const isSocketOpen = () => {
+    const ws = getWebSocket();
+    return ws && ws.readyState === WebSocket.OPEN;
+  };
+
   const processMessage = useCallback((data: any) => {
     if (!data || typeof data !== 'object') return;
-    
+
     try {
-      // Handle crypto events
       if (data.ev === 'XT') {
         const ticker = data.pair;
-        const currentVolume = data.v * data.p; // volume * price
+        const currentVolume = data.v * data.p;
         const baselineVolume = baselineVolumes[ticker] || currentVolume;
-
-        // Calculate relative volume
         const relativeVolume = currentVolume / baselineVolume;
 
-        // Alert criteria: 2x volume spike and price movement
         if (relativeVolume >= 2) {
           const newAlert: Alert = {
             ticker,
@@ -153,7 +120,6 @@ const VolumeScanner: React.FC = () => {
           setAlerts(prev => [newAlert, ...prev].slice(0, 50));
         }
 
-        // Update baseline volume
         setBaselineVolumes(prev => ({
           ...prev,
           [ticker]: baselineVolume,
@@ -204,7 +170,7 @@ const VolumeScanner: React.FC = () => {
           <h2 className="text-lg font-semibold text-white">Volume Scanner</h2>
         </div>
         <div className="flex items-center space-x-2">
-          <span className={`inline-block h-2 w-2 rounded-full ${connectionStatusColor} animate-pulse`}></span>
+          <span className={`inline-block h-2 w-2 rounded-full ${connectionStatusColor} animate-pulse`} />
           <span className="text-sm text-gray-400">{connectionStatus}</span>
         </div>
       </div>
