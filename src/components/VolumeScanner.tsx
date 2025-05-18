@@ -12,7 +12,23 @@ interface Alert {
 }
 
 const VolumeScanner: React.FC = () => {
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>(() => {
+    const savedAlerts = localStorage.getItem('volumeAlerts');
+    if (savedAlerts) {
+      try {
+        // Parse stored alerts and convert timestamp strings back to Date objects
+        return JSON.parse(savedAlerts).map((alert: any) => ({
+          ...alert,
+          timestamp: new Date(alert.timestamp)
+        }));
+      } catch (err) {
+        console.error('Error loading saved alerts:', err);
+        return [];
+      }
+    }
+    return [];
+  });
+  
   const [isConnected, setIsConnected] = useState(false);
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
@@ -98,6 +114,11 @@ const VolumeScanner: React.FC = () => {
     return ws && ws.readyState === WebSocket.OPEN;
   };
 
+  // Save alerts to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+  }, [alerts]);
+
   const processMessage = useCallback((data: any) => {
     if (!data || typeof data !== 'object') return;
 
@@ -162,6 +183,11 @@ const VolumeScanner: React.FC = () => {
     'Connecting...': 'bg-gray-400'
   }[connectionStatus] || 'bg-gray-400';
 
+  const clearAlerts = () => {
+    setAlerts([]);
+    localStorage.removeItem('volumeAlerts');
+  };
+
   return (
     <div className="bg-gray-900 rounded-lg shadow-xl border border-gray-800 overflow-hidden">
       <div className="p-4 border-b border-gray-800 flex items-center justify-between">
@@ -169,9 +195,17 @@ const VolumeScanner: React.FC = () => {
           <Volume2 className="text-blue-400" size={20} />
           <h2 className="text-lg font-semibold text-white">Volume Scanner</h2>
         </div>
-        <div className="flex items-center space-x-2">
-          <span className={`inline-block h-2 w-2 rounded-full ${connectionStatusColor} animate-pulse`} />
-          <span className="text-sm text-gray-400">{connectionStatus}</span>
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={clearAlerts}
+            className="px-3 py-1 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors"
+          >
+            Clear Alerts
+          </button>
+          <div className="flex items-center space-x-2">
+            <span className={`inline-block h-2 w-2 rounded-full ${connectionStatusColor} animate-pulse`} />
+            <span className="text-sm text-gray-400">{connectionStatus}</span>
+          </div>
         </div>
       </div>
 
