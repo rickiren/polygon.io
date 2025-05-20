@@ -59,10 +59,10 @@ const VolumeScanner: React.FC = () => {
         }));
       } catch (err) {
         console.error('Error loading saved alerts:', err);
-        return sampleAlerts; // Use sample alerts if there's an error
+        return sampleAlerts;
       }
     }
-    return sampleAlerts; // Use sample alerts if no saved alerts
+    return sampleAlerts;
   });
   
   const [isConnected, setIsConnected] = useState(false);
@@ -71,6 +71,7 @@ const VolumeScanner: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
+  const [debugInfo, setDebugInfo] = useState<string>('');
 
   const WS_URL = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
@@ -92,6 +93,7 @@ const VolumeScanner: React.FC = () => {
       setError(null);
       setRetryCount(0);
       setConnectionStatus('Connected');
+      setDebugInfo('WebSocket connection established');
 
       setTimeout(() => {
         if (isSocketOpen()) {
@@ -107,11 +109,11 @@ const VolumeScanner: React.FC = () => {
                 params: 'XT.*',
               }));
             } else {
-              console.warn('WebSocket not ready at subscription');
+              setDebugInfo('WebSocket not ready at subscription');
             }
           }, 500);
         } else {
-          console.warn('WebSocket not ready at auth');
+          setDebugInfo('WebSocket not ready at auth');
         }
       }, 500);
     },
@@ -120,6 +122,7 @@ const VolumeScanner: React.FC = () => {
       setIsConnected(false);
       setConnectionStatus('Disconnected');
       setError('Connection closed. Attempting to reconnect...');
+      setDebugInfo('WebSocket connection closed');
     },
     onError: (event) => {
       console.error('WebSocket error:', event);
@@ -127,6 +130,7 @@ const VolumeScanner: React.FC = () => {
       setIsConnected(false);
       setConnectionStatus('Error');
       setRetryCount(prev => prev + 1);
+      setDebugInfo('WebSocket connection error');
     },
     onMessage: (event) => {
       try {
@@ -134,14 +138,17 @@ const VolumeScanner: React.FC = () => {
         if (data.ev === 'status' && data.status === 'auth_success') {
           console.log('Authentication successful');
           setConnectionStatus('Authenticated');
+          setDebugInfo('WebSocket authenticated successfully');
           return;
         }
         if (data.ev === 'status' && data.status === 'success') {
           console.log('Subscription successful');
+          setDebugInfo('WebSocket subscription successful');
           return;
         }
       } catch (err) {
         console.error('Error parsing message:', err);
+        setDebugInfo('Error parsing WebSocket message');
       }
     },
     shouldReconnect: () => retryCount < 5,
@@ -164,7 +171,15 @@ const VolumeScanner: React.FC = () => {
         const currentVolume = data.v * data.p;
         const baselineVolume = baselineVolumes[ticker] || currentVolume;
         const relativeVolume = currentVolume / baselineVolume;
-        const previousHigh = dailyHighs[ticker] || 0;
+        const previousHigh = dailyHighs[ticker] || currentPrice;
+
+        // Debug logging
+        console.log(`Processing ${ticker}:`, {
+          currentPrice,
+          previousHigh,
+          isNewHigh: currentPrice > previousHigh,
+          relativeVolume
+        });
 
         let shouldAddAlert = false;
         let alertType: 'volume' | 'high' = 'volume';
@@ -173,20 +188,24 @@ const VolumeScanner: React.FC = () => {
         if (relativeVolume >= 2) {
           shouldAddAlert = true;
           alertType = 'volume';
+          console.log(`Volume alert triggered for ${ticker}:`, { relativeVolume });
         }
 
         // Check for new daily high
-        if (currentPrice > previousHigh && previousHigh !== 0) {
+        if (currentPrice > previousHigh) {
           shouldAddAlert = true;
           alertType = 'high';
-        }
+          console.log(`New high alert triggered for ${ticker}:`, {
+            currentPrice,
+            previousHigh
+          });
 
-        // Update daily high if needed
-        if (currentPrice > previousHigh) {
-          setDailyHighs(prev => ({
-            ...prev,
-            [ticker]: currentPrice
-          }));
+          // Update daily high
+          setDailyHighs(prev => {
+            const updated = { ...prev, [ticker]: currentPrice };
+            console.log('Updated daily highs:', updated);
+            return updated;
+          });
         }
 
         if (shouldAddAlert) {
@@ -199,7 +218,13 @@ const VolumeScanner: React.FC = () => {
             type: alertType
           };
 
-          setAlerts(prev => [newAlert, ...prev].slice(0, 50));
+          setAlerts(prev => {
+            const updated = [newAlert, ...prev].slice(0, 50);
+            console.log('New alert added:', newAlert);
+            return updated;
+          });
+
+          setDebugInfo(`Alert triggered: ${alertType} for ${ticker}`);
         }
 
         setBaselineVolumes(prev => ({
@@ -209,6 +234,7 @@ const VolumeScanner: React.FC = () => {
       }
     } catch (err) {
       console.error('Error processing message:', err);
+      setDebugInfo(`Error processing message: ${err.message}`);
     }
   }, [baselineVolumes, dailyHighs]);
 
@@ -223,6 +249,7 @@ const VolumeScanner: React.FC = () => {
         }
       } catch (err) {
         console.error('Error processing message:', err);
+        setDebugInfo(`Error processing WebSocket message: ${err.message}`);
       }
     }
   }, [lastMessage, processMessage]);
@@ -247,6 +274,7 @@ const VolumeScanner: React.FC = () => {
   const clearAlerts = () => {
     setAlerts([]);
     localStorage.removeItem('volumeAlerts');
+    setDebugInfo('Alerts cleared');
   };
 
   return (
@@ -288,6 +316,11 @@ const VolumeScanner: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Debug Info Panel */}
+      <div className="p-2 bg-gray-800 border-b border-gray-700">
+        <p className="text-xs text-gray-400">Debug: {debugInfo}</p>
+      </div>
 
       <div className="overflow-x-auto">
         <table className="w-full">
