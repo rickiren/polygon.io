@@ -74,49 +74,45 @@ const VolumeScanner: React.FC = () => {
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
   const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(socketUrl, {
+    shouldReconnect: (closeEvent) => true,
+    reconnectAttempts: 5,
+    reconnectInterval: 5000,
     onOpen: () => {
       console.log('✅ WebSocket Connected');
       setConnectionStatus('Connected');
-      setDebugInfo('WebSocket connection established');
       
-      // Add delay before sending auth
       setTimeout(() => {
-        console.log('Sending auth message...');
+        console.log('🔑 Sending auth message...');
         sendJsonMessage({ action: 'auth', params: API_KEY });
-        setDebugInfo('Authentication message sent');
         
-        // Add delay before subscription
         setTimeout(() => {
-          console.log('Sending subscription message...');
+          console.log('📩 Sending subscription message...');
           sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
-          setDebugInfo('Subscription message sent');
         }, 200);
       }, 200);
-    },
-    onMessage: (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        if (data.ev === 'status' && data.status === 'auth_success') {
-          setConnectionStatus('Authenticated');
-          setDebugInfo('Authentication successful');
-        } else if (data.ev === 'status' && data.status === 'success') {
-          setDebugInfo('Subscription successful');
-        }
-        processMessage(data);
-      } catch (err) {
-        console.error('Error processing message:', err);
-        setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      }
     },
     onClose: () => {
       console.log('❌ WebSocket Disconnected');
       setConnectionStatus('Disconnected');
-      setDebugInfo('WebSocket disconnected');
       setError('Connection closed. Attempting to reconnect...');
     },
-    shouldReconnect: () => true,
-    reconnectAttempts: 10,
-    reconnectInterval: 5000,
+    onError: (event) => {
+      console.error('WebSocket Error:', event);
+      setConnectionStatus('Error');
+      setError('Connection error occurred. Please check your internet connection.');
+    },
+    onMessage: (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.ev === 'status' && data.status === 'auth_success') {
+          setConnectionStatus('Authenticated');
+          setError(null);
+        }
+        processMessage(data);
+      } catch (err) {
+        console.error('Error processing message:', err);
+      }
+    }
   });
 
   const processMessage = useCallback((data: any) => {
