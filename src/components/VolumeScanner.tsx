@@ -151,9 +151,9 @@ const VolumeScanner: React.FC = () => {
         setDebugInfo('Error parsing WebSocket message');
       }
     },
-    shouldReconnect: () => retryCount < 5,
-    reconnectInterval: (attemptNumber) => Math.min(1000 * Math.pow(2, attemptNumber), 10000),
+    shouldReconnect: (closeEvent) => true,
     reconnectAttempts: 5,
+    reconnectInterval: 5000,
     share: true
   });
 
