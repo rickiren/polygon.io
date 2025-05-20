@@ -79,12 +79,19 @@ const VolumeScanner: React.FC = () => {
       setConnectionStatus('Connected');
       setDebugInfo('WebSocket connection established');
       
-      sendJsonMessage({ action: 'auth', params: API_KEY });
-
+      // Add delay before sending auth
       setTimeout(() => {
-        sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
-        setDebugInfo('Subscription request sent');
-      }, 500);
+        console.log('Sending auth message...');
+        sendJsonMessage({ action: 'auth', params: API_KEY });
+        setDebugInfo('Authentication message sent');
+        
+        // Add delay before subscription
+        setTimeout(() => {
+          console.log('Sending subscription message...');
+          sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
+          setDebugInfo('Subscription message sent');
+        }, 200);
+      }, 200);
     },
     onMessage: (msg) => {
       try {
