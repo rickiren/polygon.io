@@ -13,14 +13,13 @@ interface Alert {
 }
 
 const VolumeScanner: React.FC = () => {
-  // Generate sample alerts
   const sampleAlerts: Alert[] = [
     {
       ticker: 'X:BTCUSD',
       price: 65432.10,
       changePercent: 5.43,
       relativeVolume: 3.2,
-      timestamp: new Date(Date.now() - 30000), // 30 seconds ago
+      timestamp: new Date(Date.now() - 30000),
       type: 'volume'
     },
     {
@@ -28,7 +27,7 @@ const VolumeScanner: React.FC = () => {
       price: 3456.78,
       changePercent: 8.21,
       relativeVolume: 1.5,
-      timestamp: new Date(Date.now() - 60000), // 1 minute ago
+      timestamp: new Date(Date.now() - 60000),
       type: 'high'
     },
     {
@@ -36,7 +35,7 @@ const VolumeScanner: React.FC = () => {
       price: 123.45,
       changePercent: 12.34,
       relativeVolume: 4.1,
-      timestamp: new Date(Date.now() - 120000), // 2 minutes ago
+      timestamp: new Date(Date.now() - 120000),
       type: 'volume'
     },
     {
@@ -44,7 +43,7 @@ const VolumeScanner: React.FC = () => {
       price: 0.12345,
       changePercent: 15.67,
       relativeVolume: 2.8,
-      timestamp: new Date(Date.now() - 180000), // 3 minutes ago
+      timestamp: new Date(Date.now() - 180000),
       type: 'high'
     }
   ];
@@ -64,102 +63,54 @@ const VolumeScanner: React.FC = () => {
     }
     return sampleAlerts;
   });
-  
-  const [isConnected, setIsConnected] = useState(false);
+
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [dailyHighs, setDailyHighs] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [debugInfo, setDebugInfo] = useState<string>('');
 
-  const WS_URL = 'wss://socket.polygon.io/crypto';
+  const socketUrl = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
-  const isSocketOpen = () => {
-    const ws = getWebSocket();
-    return ws && ws.readyState === WebSocket.OPEN;
-  };
-
-  const {
-    sendMessage,
-    lastMessage,
-    readyState,
-    getWebSocket
-  } = useWebSocket(WS_URL, {
+  const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(socketUrl, {
     onOpen: () => {
-      console.log('WebSocket Connected');
-      setIsConnected(true);
-      setError(null);
-      setRetryCount(0);
+      console.log('✅ WebSocket Connected');
       setConnectionStatus('Connected');
       setDebugInfo('WebSocket connection established');
+      
+      sendJsonMessage({ action: 'auth', params: API_KEY });
 
       setTimeout(() => {
-        if (isSocketOpen()) {
-          sendMessage(JSON.stringify({
-            action: 'auth',
-            params: API_KEY,
-          }));
-
-          setTimeout(() => {
-            if (isSocketOpen()) {
-              sendMessage(JSON.stringify({
-                action: 'subscribe',
-                params: 'XT.*',
-              }));
-            } else {
-              setDebugInfo('WebSocket not ready at subscription');
-            }
-          }, 500);
-        } else {
-          setDebugInfo('WebSocket not ready at auth');
-        }
+        sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
+        setDebugInfo('Subscription request sent');
       }, 500);
     },
-    onClose: () => {
-      console.log('WebSocket Disconnected');
-      setIsConnected(false);
-      setConnectionStatus('Disconnected');
-      setError('Connection closed. Attempting to reconnect...');
-      setDebugInfo('WebSocket connection closed');
-    },
-    onError: (event) => {
-      console.error('WebSocket error:', event);
-      setError('Connection error occurred. Please check your internet connection.');
-      setIsConnected(false);
-      setConnectionStatus('Error');
-      setRetryCount(prev => prev + 1);
-      setDebugInfo('WebSocket connection error');
-    },
-    onMessage: (event) => {
+    onMessage: (msg) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(msg.data);
         if (data.ev === 'status' && data.status === 'auth_success') {
-          console.log('Authentication successful');
           setConnectionStatus('Authenticated');
-          setDebugInfo('WebSocket authenticated successfully');
-          return;
+          setDebugInfo('Authentication successful');
+        } else if (data.ev === 'status' && data.status === 'success') {
+          setDebugInfo('Subscription successful');
         }
-        if (data.ev === 'status' && data.status === 'success') {
-          console.log('Subscription successful');
-          setDebugInfo('WebSocket subscription successful');
-          return;
-        }
+        processMessage(data);
       } catch (err) {
-        console.error('Error parsing message:', err);
-        setDebugInfo('Error parsing WebSocket message');
+        console.error('Error processing message:', err);
+        setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     },
-    shouldReconnect: (closeEvent) => true,
-    reconnectAttempts: 5,
+    onClose: () => {
+      console.log('❌ WebSocket Disconnected');
+      setConnectionStatus('Disconnected');
+      setDebugInfo('WebSocket disconnected');
+      setError('Connection closed. Attempting to reconnect...');
+    },
+    shouldReconnect: () => true,
+    reconnectAttempts: 10,
     reconnectInterval: 5000,
-    share: true
   });
-
-  useEffect(() => {
-    localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
-  }, [alerts]);
 
   const processMessage = useCallback((data: any) => {
     if (!data || typeof data !== 'object') return;
@@ -173,7 +124,6 @@ const VolumeScanner: React.FC = () => {
         const relativeVolume = currentVolume / baselineVolume;
         const previousHigh = dailyHighs[ticker] || currentPrice;
 
-        // Debug logging
         console.log(`Processing ${ticker}:`, {
           currentPrice,
           previousHigh,
@@ -184,14 +134,12 @@ const VolumeScanner: React.FC = () => {
         let shouldAddAlert = false;
         let alertType: 'volume' | 'high' = 'volume';
 
-        // Check for volume spike
         if (relativeVolume >= 2) {
           shouldAddAlert = true;
           alertType = 'volume';
           console.log(`Volume alert triggered for ${ticker}:`, { relativeVolume });
         }
 
-        // Check for new daily high
         if (currentPrice > previousHigh) {
           shouldAddAlert = true;
           alertType = 'high';
@@ -200,7 +148,6 @@ const VolumeScanner: React.FC = () => {
             previousHigh
           });
 
-          // Update daily high
           setDailyHighs(prev => {
             const updated = { ...prev, [ticker]: currentPrice };
             console.log('Updated daily highs:', updated);
@@ -234,33 +181,18 @@ const VolumeScanner: React.FC = () => {
       }
     } catch (err) {
       console.error('Error processing message:', err);
-      setDebugInfo(`Error processing message: ${err.message}`);
+      setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }, [baselineVolumes, dailyHighs]);
 
   useEffect(() => {
-    if (lastMessage?.data) {
-      try {
-        const data = JSON.parse(lastMessage.data);
-        if (Array.isArray(data)) {
-          data.forEach(processMessage);
-        } else {
-          processMessage(data);
-        }
-      } catch (err) {
-        console.error('Error processing message:', err);
-        setDebugInfo(`Error processing WebSocket message: ${err.message}`);
-      }
-    }
-  }, [lastMessage, processMessage]);
+    localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+  }, [alerts]);
 
-  const handleRetryConnection = () => {
-    setRetryCount(0);
-    setError(null);
-    const ws = getWebSocket();
-    if (ws) {
-      ws.close();
-    }
+  const clearAlerts = () => {
+    setAlerts([]);
+    localStorage.removeItem('volumeAlerts');
+    setDebugInfo('Alerts cleared');
   };
 
   const connectionStatusColor = {
@@ -270,12 +202,6 @@ const VolumeScanner: React.FC = () => {
     'Error': 'bg-yellow-400',
     'Connecting...': 'bg-gray-400'
   }[connectionStatus] || 'bg-gray-400';
-
-  const clearAlerts = () => {
-    setAlerts([]);
-    localStorage.removeItem('volumeAlerts');
-    setDebugInfo('Alerts cleared');
-  };
 
   return (
     <div className="bg-gray-900 rounded-lg shadow-xl border border-gray-800 overflow-hidden">
@@ -300,19 +226,9 @@ const VolumeScanner: React.FC = () => {
 
       {error && (
         <div className="p-4 bg-red-900/20 border-b border-red-800">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2 text-red-400">
-              <AlertTriangle size={16} />
-              <p className="text-sm">{error}</p>
-            </div>
-            {retryCount >= 5 && (
-              <button
-                onClick={handleRetryConnection}
-                className="px-3 py-1 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors"
-              >
-                Retry Connection
-              </button>
-            )}
+          <div className="flex items-center space-x-2 text-red-400">
+            <AlertTriangle size={16} />
+            <p className="text-sm">{error}</p>
           </div>
         </div>
       )}
