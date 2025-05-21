@@ -1,0 +1,13 @@
+[build]
+name = "crypto-monitor"
+builder = "nixpacks"
+watchPatterns = ["railway/**/*"]
+startCommand = "npm run start:worker"
+
+[deploy]
+startCommand = "npm run start:worker"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 10
+
+[env]
+NODE_ENV = "production"
