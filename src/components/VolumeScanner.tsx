@@ -1,5 +1,3 @@
-// This file contains the full VolumeScanner.tsx with Telegram alerts added.
-
 import React, { useState, useEffect, useCallback } from 'react';
 import useWebSocket from 'react-use-websocket';
 import { AlertTriangle, Volume2 } from 'lucide-react';
@@ -11,7 +9,7 @@ interface Alert {
   changePercent: number;
   relativeVolume: number;
   timestamp: Date;
-  type: 'volume' | 'high' | 'spike';
+  type: 'volume' | 'high';
 }
 
 const VolumeScanner: React.FC = () => {
@@ -19,15 +17,14 @@ const VolumeScanner: React.FC = () => {
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [dailyHighs, setDailyHighs] = useState<Record<string, number>>({});
   const [volumeHistory, setVolumeHistory] = useState<Record<string, number[]>>({});
-  const [priceHistory, setPriceHistory] = useState<Record<string, { price: number; time: number }[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [debugInfo, setDebugInfo] = useState<string>('');
 
   const socketUrl = 'wss://socket.polygon.io/crypto';
-  const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
-  const TELEGRAM_BOT_TOKEN = '8061014997:AAFL4AIxp9XkRMXUbDDWPUA1hGbYyic1AfU';
-  const TELEGRAM_CHAT_ID = '1054741134';
+  const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q'; // Replace with your actual API key
+
+  const isBrowser = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined';
 
   const updateVolumeHistory = useCallback((ticker: string, volume: number) => {
     setVolumeHistory(prev => {
@@ -36,18 +33,14 @@ const VolumeScanner: React.FC = () => {
     });
   }, []);
 
-  const updatePriceHistory = useCallback((ticker: string, price: number) => {
-    const now = Date.now();
-    setPriceHistory(prev => {
-      const history = [...(prev[ticker] || []), { price, time: now }].filter(p => now - p.time <= 5 * 60 * 1000);
-      return { ...prev, [ticker]: history };
-    });
-  }, []);
-
   const calculateBaselineVolume = useCallback((ticker: string, currentVolume: number) => {
     const history = volumeHistory[ticker] || [];
     updateVolumeHistory(ticker, currentVolume);
-    if (history.length < 5) return currentVolume;
+
+    if (history.length < 5) {
+      return currentVolume;
+    }
+
     const average = history.reduce((sum, vol) => sum + vol, 0) / history.length;
     return average;
   }, [volumeHistory, updateVolumeHistory]);
@@ -60,21 +53,24 @@ const VolumeScanner: React.FC = () => {
       const baselineVolume = calculateBaselineVolume(ticker, currentVolume);
       const relativeVolume = currentVolume / baselineVolume;
 
-      updatePriceHistory(ticker, currentPrice);
-
-      const fiveMinuteAgo = (priceHistory[ticker] || []).find(p => Date.now() - p.time >= 5 * 60 * 1000);
-      const priceChangePercent = fiveMinuteAgo ? ((currentPrice - fiveMinuteAgo.price) / fiveMinuteAgo.price) * 100 : 0;
-
       let previousHigh = dailyHighs[ticker];
       if (!previousHigh) {
         previousHigh = currentPrice;
         setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
       }
 
-      let shouldAddAlert = false;
-      let alertType: Alert['type'] = 'volume';
+      console.log(`📊 ${ticker}`, {
+        price: currentPrice,
+        previousHigh,
+        relativeVolume,
+        baselineVolume,
+        volume: currentVolume
+      });
 
-      if (relativeVolume >= 1.01) {
+      let shouldAddAlert = false;
+      let alertType: 'volume' | 'high' = 'volume';
+
+      if (relativeVolume >= 1.1) {
         shouldAddAlert = true;
         alertType = 'volume';
       }
@@ -85,16 +81,11 @@ const VolumeScanner: React.FC = () => {
         setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
       }
 
-      if (priceChangePercent >= 5) {
-        shouldAddAlert = true;
-        alertType = 'spike';
-      }
-
       if (shouldAddAlert) {
         const newAlert: Alert = {
           ticker,
           price: currentPrice,
-          changePercent: data.dp || priceChangePercent || 0,
+          changePercent: data.dp || 0,
           relativeVolume,
           timestamp: new Date(),
           type: alertType
@@ -103,16 +94,6 @@ const VolumeScanner: React.FC = () => {
         setAlerts(prev => [newAlert, ...prev].slice(0, 50));
         setDebugInfo(`ALERT: ${alertType.toUpperCase()} on ${ticker}`);
         console.log('🚨 Alert:', newAlert);
-
-        // Send Telegram alert
-        fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: TELEGRAM_CHAT_ID,
-            text: `🚨 ${alertType.toUpperCase()} ALERT!\n${ticker}\nPrice: $${currentPrice.toFixed(2)}\nRel Vol: ${relativeVolume.toFixed(2)}x`,
-          }),
-        });
       }
 
       setBaselineVolumes(prev => ({
@@ -123,9 +104,9 @@ const VolumeScanner: React.FC = () => {
       console.error('Process error:', err);
       setDebugInfo(`Process error: ${err instanceof Error ? err.message : 'Unknown'}`);
     }
-  }, [calculateBaselineVolume, dailyHighs, priceHistory, updatePriceHistory]);
+  }, [calculateBaselineVolume, dailyHighs]);
 
-  const { sendJsonMessage } = useWebSocket(socketUrl, {
+  const socketOptions = {
     shouldReconnect: () => true,
     reconnectAttempts: 5,
     reconnectInterval: 5000,
@@ -133,9 +114,12 @@ const VolumeScanner: React.FC = () => {
       console.log('✅ WebSocket Connected');
       setConnectionStatus('Connected');
 
+      // Send auth immediately, then subscribe after short delay
+      console.log('🔑 Sending auth...');
       sendJsonMessage({ action: 'auth', params: API_KEY });
 
       setTimeout(() => {
+        console.log('📩 Subscribing...');
         sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
       }, 300);
     },
@@ -151,28 +135,40 @@ const VolumeScanner: React.FC = () => {
     onMessage: (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
+        console.log('🔔 Incoming:', data);
+
         if (data.ev === 'status' && data.status === 'auth_success') {
           setConnectionStatus('Authenticated');
           setError(null);
           return;
         }
+
         if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) return;
+
         processMessage(data);
       } catch (err) {
         setDebugInfo(`Message error: ${err instanceof Error ? err.message : 'Unknown'}`);
       }
     }
-  });
+  };
+
+  const socketHooks = isBrowser ? useWebSocket(socketUrl, socketOptions) : {
+    sendJsonMessage: () => {},
+    lastJsonMessage: null,
+    readyState: null
+  };
+
+  const { sendJsonMessage } = socketHooks;
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
+    if (typeof window !== 'undefined') {
       localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
     }
   }, [alerts]);
 
   const clearAlerts = () => {
     setAlerts([]);
-    if (typeof window !== 'undefined' && window.localStorage) {
+    if (typeof window !== 'undefined') {
       localStorage.removeItem('volumeAlerts');
     }
     setDebugInfo('Alerts cleared');
@@ -237,7 +233,7 @@ const VolumeScanner: React.FC = () => {
                   <div className="flex flex-col items-center space-y-2">
                     <AlertTriangle className="text-yellow-500" size={24} />
                     <p>Waiting for alerts...</p>
-                    <p className="text-sm text-gray-500">Monitoring for volume spikes, breakouts, and price surges</p>
+                    <p className="text-sm text-gray-500">Monitoring for volume spikes and new highs</p>
                   </div>
                 </td>
               </tr>
@@ -250,13 +246,9 @@ const VolumeScanner: React.FC = () => {
                   <td className="px-4 py-3 text-sm text-gray-300">{alert.timestamp.toLocaleTimeString()}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      alert.type === 'volume'
-                        ? 'bg-blue-900/50 text-blue-400'
-                        : alert.type === 'high'
-                        ? 'bg-green-900/50 text-green-400'
-                        : 'bg-yellow-900/50 text-yellow-400'
+                      alert.type === 'volume' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
                     }`}>
-                      {alert.type === 'volume' ? 'Volume' : alert.type === 'high' ? 'New High' : '5% Spike'}
+                      {alert.type === 'volume' ? 'Volume' : 'New High'}
                     </span>
                   </td>
                   <td className="px-4 py-3 font-mono font-medium text-white">{alert.ticker}</td>
