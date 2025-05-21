@@ -22,7 +22,7 @@ const VolumeScanner: React.FC = () => {
   const [debugInfo, setDebugInfo] = useState<string>('');
 
   const socketUrl = 'wss://socket.polygon.io/crypto';
-  const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
+  const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q'; // Replace with your actual API key
 
   const isBrowser = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined';
 
@@ -114,15 +114,14 @@ const VolumeScanner: React.FC = () => {
       console.log('✅ WebSocket Connected');
       setConnectionStatus('Connected');
 
-      setTimeout(() => {
-        console.log('🔑 Sending auth...');
-        sendJsonMessage({ action: 'auth', params: API_KEY });
+      // Send auth immediately, then subscribe after short delay
+      console.log('🔑 Sending auth...');
+      sendJsonMessage({ action: 'auth', params: API_KEY });
 
-        setTimeout(() => {
-          console.log('📩 Subscribing...');
-          sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
-        }, 200);
-      }, 200);
+      setTimeout(() => {
+        console.log('📩 Subscribing...');
+        sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
+      }, 300);
     },
     onClose: () => {
       setConnectionStatus('Disconnected');
