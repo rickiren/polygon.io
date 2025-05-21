@@ -1,12 +1,10 @@
+// railway/worker.js
 import WebSocket from 'ws';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
 // Load environment variables
 dotenv.config();
-
-// Initial test log
-console.log("✅ Worker started");
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -109,11 +107,6 @@ function connectWebSocket() {
     ws.close();
   });
 }
-
-// Keep-alive log
-setInterval(() => {
-  console.log("👀 Worker still running...");
-}, 10000);
 
 console.log('🚀 Starting crypto monitor worker...');
 connectWebSocket();
