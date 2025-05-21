@@ -1,3 +1,5 @@
+// VolumeScanner.tsx with Supabase + Telegram Alerts (final version)
+
 import React, { useState, useEffect, useCallback } from 'react';
 import useWebSocket from 'react-use-websocket';
 import { AlertTriangle, Volume2 } from 'lucide-react';
@@ -18,6 +20,8 @@ const VolumeScanner: React.FC = () => {
 
   const socketUrl = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
+  const TELEGRAM_BOT_TOKEN = '8061014997:AAFL4AIxp9XkRMXUbDDWPUA1hGbYyic1AfU';
+  const TELEGRAM_CHAT_ID = '1054741134';
 
   const isBrowser = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined';
 
@@ -52,12 +56,8 @@ const VolumeScanner: React.FC = () => {
     const history = volumeHistory[ticker] || [];
     updateVolumeHistory(ticker, currentVolume);
 
-    if (history.length < 5) {
-      return currentVolume;
-    }
-
-    const average = history.reduce((sum, vol) => sum + vol, 0) / history.length;
-    return average;
+    if (history.length < 5) return currentVolume;
+    return history.reduce((sum, vol) => sum + vol, 0) / history.length;
   }, [volumeHistory, updateVolumeHistory]);
 
   const processMessage = useCallback(async (data: any) => {
@@ -73,14 +73,6 @@ const VolumeScanner: React.FC = () => {
         previousHigh = currentPrice;
         setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
       }
-
-      console.log(`📊 ${ticker}`, {
-        price: currentPrice,
-        previousHigh,
-        relativeVolume,
-        baselineVolume,
-        volume: currentVolume
-      });
 
       let shouldAddAlert = false;
       let alertType: 'volume' | 'high' = 'volume';
@@ -112,21 +104,25 @@ const VolumeScanner: React.FC = () => {
           .select()
           .single();
 
-        if (insertError) {
-          throw insertError;
-        }
+        if (insertError) throw insertError;
 
         if (insertedAlert) {
           setAlerts(prev => [insertedAlert, ...prev].slice(0, 50));
           setDebugInfo(`ALERT: ${alertType.toUpperCase()} on ${ticker}`);
           console.log('🚨 Alert:', insertedAlert);
+
+          await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: TELEGRAM_CHAT_ID,
+              text: `🚨 ${alertType.toUpperCase()} ALERT!\n${ticker}\nPrice: $${currentPrice.toFixed(2)}\nRel Vol: ${relativeVolume.toFixed(2)}x`,
+            }),
+          });
         }
       }
 
-      setBaselineVolumes(prev => ({
-        ...prev,
-        [ticker]: baselineVolume
-      }));
+      setBaselineVolumes(prev => ({ ...prev, [ticker]: baselineVolume }));
     } catch (err) {
       console.error('Process error:', err);
       setDebugInfo(`Process error: ${err instanceof Error ? err.message : 'Unknown'}`);
@@ -163,16 +159,12 @@ const VolumeScanner: React.FC = () => {
     onMessage: (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('🔔 Incoming:', data);
-
         if (data.ev === 'status' && data.status === 'auth_success') {
           setConnectionStatus('Authenticated');
           setError(null);
           return;
         }
-
         if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) return;
-
         processMessage(data);
       } catch (err) {
         setDebugInfo(`Message error: ${err instanceof Error ? err.message : 'Unknown'}`);
@@ -192,7 +184,7 @@ const VolumeScanner: React.FC = () => {
         .neq('id', '00000000-0000-0000-0000-000000000000');
 
       if (error) throw error;
-      
+
       setAlerts([]);
       setDebugInfo('Alerts cleared from database');
     } catch (err) {
