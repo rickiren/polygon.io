@@ -22,7 +22,7 @@ const VolumeScanner: React.FC = () => {
   const [debugInfo, setDebugInfo] = useState<string>('');
 
   const socketUrl = 'wss://socket.polygon.io/crypto';
-  const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q'; // Replace with your actual API key
+  const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
   const isBrowser = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined';
 
@@ -70,7 +70,7 @@ const VolumeScanner: React.FC = () => {
       let shouldAddAlert = false;
       let alertType: 'volume' | 'high' = 'volume';
 
-      if (relativeVolume >= 1.1) {
+      if (relativeVolume >= 1.5) {
         shouldAddAlert = true;
         alertType = 'volume';
       }
@@ -114,14 +114,15 @@ const VolumeScanner: React.FC = () => {
       console.log('✅ WebSocket Connected');
       setConnectionStatus('Connected');
 
-      // Send auth immediately, then subscribe after short delay
-      console.log('🔑 Sending auth...');
-      sendJsonMessage({ action: 'auth', params: API_KEY });
-
       setTimeout(() => {
-        console.log('📩 Subscribing...');
-        sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
-      }, 300);
+        console.log('🔑 Sending auth...');
+        sendJsonMessage({ action: 'auth', params: API_KEY });
+
+        setTimeout(() => {
+          console.log('📩 Subscribing...');
+          sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
+        }, 200);
+      }, 200);
     },
     onClose: () => {
       setConnectionStatus('Disconnected');
@@ -152,13 +153,22 @@ const VolumeScanner: React.FC = () => {
     }
   };
 
-  const socketHooks = isBrowser ? useWebSocket(socketUrl, socketOptions) : {
-    sendJsonMessage: () => {},
-    lastJsonMessage: null,
-    readyState: null
-  };
+  const { sendJsonMessage } = isBrowser
+    ? useWebSocket(socketUrl, socketOptions)
+    : { sendJsonMessage: () => {} }; // dummy fallback
 
-  const { sendJsonMessage } = socketHooks;
+  // 🔧 Test alert to confirm UI is working
+  useEffect(() => {
+    const testAlert: Alert = {
+      ticker: 'X:TEST',
+      price: 12345,
+      changePercent: 4.2,
+      relativeVolume: 2.5,
+      timestamp: new Date(),
+      type: 'volume'
+    };
+    setAlerts(prev => [testAlert, ...prev]);
+  }, []);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -240,7 +250,7 @@ const VolumeScanner: React.FC = () => {
             ) : (
               alerts.map((alert, index) => (
                 <tr
-                  key={`${alert.ticker}-${alert.timestamp.getTime()}-${index}`}
+                  key={`${alert.ticker}-${alert.timestamp.getTime()}`}
                   className={`${index === 0 ? 'animate-pulse bg-green-900/20' : ''} hover:bg-gray-800/50`}
                 >
                   <td className="px-4 py-3 text-sm text-gray-300">{alert.timestamp.toLocaleTimeString()}</td>
