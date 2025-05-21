@@ -13,62 +13,13 @@ interface Alert {
 }
 
 const VolumeScanner: React.FC = () => {
-  const sampleAlerts: Alert[] = [
-    {
-      ticker: 'X:BTCUSD',
-      price: 65432.10,
-      changePercent: 5.43,
-      relativeVolume: 3.2,
-      timestamp: new Date(Date.now() - 30000),
-      type: 'volume'
-    },
-    {
-      ticker: 'X:ETHUSD',
-      price: 3456.78,
-      changePercent: 8.21,
-      relativeVolume: 1.5,
-      timestamp: new Date(Date.now() - 60000),
-      type: 'high'
-    },
-    {
-      ticker: 'X:SOLUSD',
-      price: 123.45,
-      changePercent: 12.34,
-      relativeVolume: 4.1,
-      timestamp: new Date(Date.now() - 120000),
-      type: 'volume'
-    },
-    {
-      ticker: 'X:DOGEUSD',
-      price: 0.12345,
-      changePercent: 15.67,
-      relativeVolume: 2.8,
-      timestamp: new Date(Date.now() - 180000),
-      type: 'high'
-    }
-  ];
-
-  const [alerts, setAlerts] = useState<Alert[]>(() => {
-    const savedAlerts = localStorage.getItem('volumeAlerts');
-    if (savedAlerts) {
-      try {
-        return JSON.parse(savedAlerts).map((alert: any) => ({
-          ...alert,
-          timestamp: new Date(alert.timestamp)
-        }));
-      } catch (err) {
-        console.error('Error loading saved alerts:', err);
-        return sampleAlerts;
-      }
-    }
-    return sampleAlerts;
-  });
-
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [dailyHighs, setDailyHighs] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [debugInfo, setDebugInfo] = useState<string>('');
+  const [volumeHistory, setVolumeHistory] = useState<Record<string, number[]>>({});
 
   const socketUrl = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
@@ -104,89 +55,121 @@ const VolumeScanner: React.FC = () => {
     onMessage: (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log('🔔 Received:', data);
+        
         if (data.ev === 'status' && data.status === 'auth_success') {
           setConnectionStatus('Authenticated');
           setError(null);
+          return;
         }
+        
+        if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) {
+          return;
+        }
+        
         processMessage(data);
       } catch (err) {
         console.error('Error processing message:', err);
+        setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     }
   });
+
+  const updateVolumeHistory = useCallback((ticker: string, volume: number) => {
+    setVolumeHistory(prev => {
+      const history = [...(prev[ticker] || []), volume].slice(-10);
+      return { ...prev, [ticker]: history };
+    });
+  }, []);
+
+  const calculateBaselineVolume = useCallback((ticker: string, currentVolume: number) => {
+    const history = volumeHistory[ticker] || [];
+    if (history.length < 5) {
+      updateVolumeHistory(ticker, currentVolume);
+      return currentVolume;
+    }
+    
+    const average = history.reduce((sum, vol) => sum + vol, 0) / history.length;
+    updateVolumeHistory(ticker, currentVolume);
+    return average;
+  }, [volumeHistory, updateVolumeHistory]);
 
   const processMessage = useCallback((data: any) => {
     if (!data || typeof data !== 'object') return;
 
     try {
-      if (data.ev === 'XT') {
-        const ticker = data.pair;
-        const currentPrice = data.p;
-        const currentVolume = data.v * data.p;
-        const baselineVolume = baselineVolumes[ticker] || currentVolume;
-        const relativeVolume = currentVolume / baselineVolume;
-        const previousHigh = dailyHighs[ticker] || currentPrice;
+      const ticker = data.pair;
+      const currentPrice = data.p;
+      const currentVolume = data.v * data.p;
+      const baselineVolume = calculateBaselineVolume(ticker, currentVolume);
+      const relativeVolume = currentVolume / baselineVolume;
+      const previousHigh = dailyHighs[ticker];
 
-        console.log(`Processing ${ticker}:`, {
+      console.log(`Processing ${ticker}:`, {
+        currentPrice,
+        previousHigh,
+        currentVolume,
+        baselineVolume,
+        relativeVolume
+      });
+
+      let shouldAddAlert = false;
+      let alertType: 'volume' | 'high' = 'volume';
+
+      // Initialize daily high if not set
+      if (!previousHigh) {
+        setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
+        return;
+      }
+
+      if (relativeVolume >= 2) {
+        shouldAddAlert = true;
+        alertType = 'volume';
+        console.log(`Volume alert triggered for ${ticker}:`, { relativeVolume });
+      }
+
+      if (currentPrice > previousHigh) {
+        shouldAddAlert = true;
+        alertType = 'high';
+        console.log(`New high alert triggered for ${ticker}:`, {
           currentPrice,
-          previousHigh,
-          isNewHigh: currentPrice > previousHigh,
-          relativeVolume
+          previousHigh
         });
 
-        let shouldAddAlert = false;
-        let alertType: 'volume' | 'high' = 'volume';
-
-        if (relativeVolume >= 2) {
-          shouldAddAlert = true;
-          alertType = 'volume';
-          console.log(`Volume alert triggered for ${ticker}:`, { relativeVolume });
-        }
-
-        if (currentPrice > previousHigh) {
-          shouldAddAlert = true;
-          alertType = 'high';
-          console.log(`New high alert triggered for ${ticker}:`, {
-            currentPrice,
-            previousHigh
-          });
-
-          setDailyHighs(prev => {
-            const updated = { ...prev, [ticker]: currentPrice };
-            console.log('Updated daily highs:', updated);
-            return updated;
-          });
-        }
-
-        if (shouldAddAlert) {
-          const newAlert: Alert = {
-            ticker,
-            price: currentPrice,
-            changePercent: data.dp || 0,
-            relativeVolume,
-            timestamp: new Date(),
-            type: alertType
-          };
-
-          setAlerts(prev => {
-            const updated = [newAlert, ...prev].slice(0, 50);
-            console.log('New alert added:', newAlert);
-            return updated;
-          });
-
-          setDebugInfo(`Alert triggered: ${alertType} for ${ticker}`);
-        }
-
-        setBaselineVolumes(prev => ({
+        setDailyHighs(prev => ({
           ...prev,
-          [ticker]: baselineVolume,
+          [ticker]: currentPrice
         }));
       }
+
+      if (shouldAddAlert) {
+        const newAlert: Alert = {
+          ticker,
+          price: currentPrice,
+          changePercent: data.dp || 0,
+          relativeVolume,
+          timestamp: new Date(),
+          type: alertType
+        };
+
+        setAlerts(prev => {
+          const updated = [newAlert, ...prev].slice(0, 50);
+          console.log('New alert added:', newAlert);
+          return updated;
+        });
+
+        setDebugInfo(`Alert triggered: ${alertType} for ${ticker}`);
+      }
+
+      setBaselineVolumes(prev => ({
+        ...prev,
+        [ticker]: baselineVolume,
+      }));
     } catch (err) {
       console.error('Error processing message:', err);
       setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-  }, [baselineVolumes, dailyHighs]);
+  }, [calculateBaselineVolume, dailyHighs]);
 
   useEffect(() => {
     localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
@@ -236,7 +219,6 @@ const VolumeScanner: React.FC = () => {
         </div>
       )}
 
-      {/* Debug Info Panel */}
       <div className="p-2 bg-gray-800 border-b border-gray-700">
         <p className="text-xs text-gray-400">Debug: {debugInfo}</p>
       </div>
