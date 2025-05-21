@@ -1,13 +1,15 @@
 {
-  "name": "vite-react-typescript-starter",
+  "name": "crypto-monitor",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:build": "tsc src/worker.ts --outDir dist --esModuleInterop true",
+    "worker:start": "node dist/worker.js"
   },
   "dependencies": {
     "@netlify/functions": "^2.6.0",
