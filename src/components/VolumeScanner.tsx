@@ -24,54 +24,7 @@ const VolumeScanner: React.FC = () => {
   const socketUrl = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
-  const { sendJsonMessage } = useWebSocket(socketUrl, {
-    shouldReconnect: () => true,
-    reconnectAttempts: 5,
-    reconnectInterval: 5000,
-    onOpen: () => {
-      console.log('✅ WebSocket Connected');
-      setConnectionStatus('Connected');
-
-      setTimeout(() => {
-        console.log('🔑 Sending auth...');
-        sendJsonMessage({ action: 'auth', params: API_KEY });
-
-        setTimeout(() => {
-          console.log('📩 Subscribing...');
-          sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
-        }, 200);
-      }, 200);
-    },
-    onClose: () => {
-      console.log('❌ Disconnected');
-      setConnectionStatus('Disconnected');
-      setError('WebSocket closed. Reconnecting...');
-    },
-    onError: (event) => {
-      console.error('WebSocket Error:', event);
-      setConnectionStatus('Error');
-      setError('WebSocket error. Check your internet or API key.');
-    },
-    onMessage: (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('🔔 Incoming:', data);
-
-        if (data.ev === 'status' && data.status === 'auth_success') {
-          setConnectionStatus('Authenticated');
-          setError(null);
-          return;
-        }
-
-        if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) return;
-
-        processMessage(data);
-      } catch (err) {
-        console.error('Error in onMessage:', err);
-        setDebugInfo(`Message error: ${err instanceof Error ? err.message : 'Unknown'}`);
-      }
-    }
-  });
+  const isBrowser = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined';
 
   const updateVolumeHistory = useCallback((ticker: string, volume: number) => {
     setVolumeHistory(prev => {
@@ -153,13 +106,81 @@ const VolumeScanner: React.FC = () => {
     }
   }, [calculateBaselineVolume, dailyHighs]);
 
+  const socketOptions = {
+    shouldReconnect: () => true,
+    reconnectAttempts: 5,
+    reconnectInterval: 5000,
+    onOpen: () => {
+      console.log('✅ WebSocket Connected');
+      setConnectionStatus('Connected');
+
+      setTimeout(() => {
+        console.log('🔑 Sending auth...');
+        sendJsonMessage({ action: 'auth', params: API_KEY });
+
+        setTimeout(() => {
+          console.log('📩 Subscribing...');
+          sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
+        }, 200);
+      }, 200);
+    },
+    onClose: () => {
+      setConnectionStatus('Disconnected');
+      setError('WebSocket closed. Reconnecting...');
+    },
+    onError: (event: any) => {
+      console.error('WebSocket error:', event);
+      setConnectionStatus('Error');
+      setError('WebSocket error. Check your internet or API key.');
+    },
+    onMessage: (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('🔔 Incoming:', data);
+
+        if (data.ev === 'status' && data.status === 'auth_success') {
+          setConnectionStatus('Authenticated');
+          setError(null);
+          return;
+        }
+
+        if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) return;
+
+        processMessage(data);
+      } catch (err) {
+        setDebugInfo(`Message error: ${err instanceof Error ? err.message : 'Unknown'}`);
+      }
+    }
+  };
+
+  const { sendJsonMessage } = isBrowser
+    ? useWebSocket(socketUrl, socketOptions)
+    : { sendJsonMessage: () => {} }; // dummy fallback
+
+  // 🔧 Test alert to confirm UI is working
   useEffect(() => {
-    localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+    const testAlert: Alert = {
+      ticker: 'X:TEST',
+      price: 12345,
+      changePercent: 4.2,
+      relativeVolume: 2.5,
+      timestamp: new Date(),
+      type: 'volume'
+    };
+    setAlerts(prev => [testAlert, ...prev]);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+    }
   }, [alerts]);
 
   const clearAlerts = () => {
     setAlerts([]);
-    localStorage.removeItem('volumeAlerts');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('volumeAlerts');
+    }
     setDebugInfo('Alerts cleared');
   };
 
