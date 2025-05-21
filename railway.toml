@@ -1,115 +1,12 @@
-// index.js (for Railway background worker)
+# railway.toml
 
-import WebSocket from 'ws';
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
-import fetch from 'node-fetch';
+[build]
+builder = "NIXPACKS"
 
-dotenv.config();
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 10
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-let baselineVolumes = {};
-let dailyHighs = {};
-let volumeHistory = {};
-
-const updateVolumeHistory = (ticker, volume) => {
-  const history = [...(volumeHistory[ticker] || []), volume].slice(-10);
-  volumeHistory[ticker] = history;
-  return history;
-};
-
-const calculateBaselineVolume = (ticker, currentVolume) => {
-  const history = updateVolumeHistory(ticker, currentVolume);
-  if (history.length < 5) return currentVolume;
-  return history.reduce((sum, vol) => sum + vol, 0) / history.length;
-};
-
-const sendTelegramAlert = async (message) => {
-  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: process.env.TELEGRAM_CHAT_ID,
-      text: message
-    })
-  });
-};
-
-const processMessage = async (data) => {
-  if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) return;
-
-  const ticker = data.pair;
-  const price = data.p;
-  const volume = data.v * data.p;
-  const baselineVolume = calculateBaselineVolume(ticker, volume);
-  const relativeVolume = volume / baselineVolume;
-  const previousHigh = dailyHighs[ticker] || price;
-
-  let alertType = null;
-  if (relativeVolume >= 1.5) {
-    alertType = 'volume';
-  } else if (price > previousHigh) {
-    alertType = 'high';
-    dailyHighs[ticker] = price;
-  }
-
-  if (alertType) {
-    const newAlert = {
-      ticker,
-      price,
-      change_percent: data.dp || 0,
-      relative_volume: relativeVolume,
-      alert_type: alertType,
-      created_at: new Date().toISOString()
-    };
-
-    await supabase.from('crypto_alerts').insert(newAlert);
-
-    await sendTelegramAlert(`🚨 ${alertType.toUpperCase()} ALERT\n${ticker}\nPrice: ${price}\nRel Volume: ${relativeVolume.toFixed(2)}x`);
-
-    console.log('ALERT:', newAlert);
-  }
-
-  baselineVolumes[ticker] = baselineVolume;
-};
-
-const connectWebSocket = () => {
-  const ws = new WebSocket('wss://socket.polygon.io/crypto');
-
-  ws.on('open', () => {
-    console.log('✅ WebSocket Connected');
-    ws.send(JSON.stringify({ action: 'auth', params: process.env.POLYGON_API_KEY }));
-    setTimeout(() => ws.send(JSON.stringify({ action: 'subscribe', params: 'XT.*' })), 200);
-  });
-
-  ws.on('message', (data) => {
-    try {
-      const message = JSON.parse(data.toString());
-      if (Array.isArray(message)) {
-        message.forEach(m => processMessage(m));
-      } else {
-        processMessage(message);
-      }
-    } catch (err) {
-      console.error('Message processing error:', err);
-    }
-  });
-
-  ws.on('close', () => {
-    console.log('❌ WebSocket closed. Reconnecting...');
-    setTimeout(connectWebSocket, 5000);
-  });
-
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
-    ws.terminate();
-    setTimeout(connectWebSocket, 5000);
-  });
-};
-
-connectWebSocket();
+[env]
+NODE_ENV = "production"
