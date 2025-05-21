@@ -1,4 +1,4 @@
-// Bulletproof VolumeScanner.tsx with Telegram alerts and safe localStorage handling
+// This file contains the full VolumeScanner.tsx with Telegram alerts added.
 
 import React, { useState, useEffect, useCallback } from 'react';
 import useWebSocket from 'react-use-websocket';
@@ -15,19 +15,7 @@ interface Alert {
 }
 
 const VolumeScanner: React.FC = () => {
-  let initialAlerts: Alert[] = [];
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const saved = localStorage.getItem('volumeAlerts');
-      if (saved) {
-        initialAlerts = JSON.parse(saved).map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) }));
-      }
-    }
-  } catch (err) {
-    console.warn('⚠️ localStorage getItem failed:', err);
-  }
-
-  const [alerts, setAlerts] = useState<Alert[]>(initialAlerts);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [dailyHighs, setDailyHighs] = useState<Record<string, number>>({});
   const [volumeHistory, setVolumeHistory] = useState<Record<string, number[]>>({});
@@ -116,6 +104,7 @@ const VolumeScanner: React.FC = () => {
         setDebugInfo(`ALERT: ${alertType.toUpperCase()} on ${ticker}`);
         console.log('🚨 Alert:', newAlert);
 
+        // Send Telegram alert
         fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -176,23 +165,15 @@ const VolumeScanner: React.FC = () => {
   });
 
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
-      }
-    } catch (err) {
-      console.warn('⚠️ localStorage setItem failed:', err);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
     }
   }, [alerts]);
 
   const clearAlerts = () => {
     setAlerts([]);
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        localStorage.removeItem('volumeAlerts');
-      }
-    } catch (err) {
-      console.warn('⚠️ localStorage removeItem failed:', err);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.removeItem('volumeAlerts');
     }
     setDebugInfo('Alerts cleared');
   };
