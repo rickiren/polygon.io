@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import useWebSocket, { ReadyState } from 'react-use-websocket';
+import useWebSocket from 'react-use-websocket';
 import { AlertTriangle, Volume2 } from 'lucide-react';
 import { formatCurrency, formatPercent } from '../services/polygonService';
 
@@ -16,61 +16,59 @@ const VolumeScanner: React.FC = () => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [baselineVolumes, setBaselineVolumes] = useState<Record<string, number>>({});
   const [dailyHighs, setDailyHighs] = useState<Record<string, number>>({});
+  const [volumeHistory, setVolumeHistory] = useState<Record<string, number[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [debugInfo, setDebugInfo] = useState<string>('');
-  const [volumeHistory, setVolumeHistory] = useState<Record<string, number[]>>({});
 
   const socketUrl = 'wss://socket.polygon.io/crypto';
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
-  const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(socketUrl, {
-    shouldReconnect: (closeEvent) => true,
+  const { sendJsonMessage } = useWebSocket(socketUrl, {
+    shouldReconnect: () => true,
     reconnectAttempts: 5,
     reconnectInterval: 5000,
     onOpen: () => {
       console.log('✅ WebSocket Connected');
       setConnectionStatus('Connected');
-      
+
       setTimeout(() => {
-        console.log('🔑 Sending auth message...');
+        console.log('🔑 Sending auth...');
         sendJsonMessage({ action: 'auth', params: API_KEY });
-        
+
         setTimeout(() => {
-          console.log('📩 Sending subscription message...');
+          console.log('📩 Subscribing...');
           sendJsonMessage({ action: 'subscribe', params: 'XT.*' });
         }, 200);
       }, 200);
     },
     onClose: () => {
-      console.log('❌ WebSocket Disconnected');
+      console.log('❌ Disconnected');
       setConnectionStatus('Disconnected');
-      setError('Connection closed. Attempting to reconnect...');
+      setError('WebSocket closed. Reconnecting...');
     },
     onError: (event) => {
       console.error('WebSocket Error:', event);
       setConnectionStatus('Error');
-      setError('Connection error occurred. Please check your internet connection.');
+      setError('WebSocket error. Check your internet or API key.');
     },
     onMessage: (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('🔔 Received:', data);
-        
+        console.log('🔔 Incoming:', data);
+
         if (data.ev === 'status' && data.status === 'auth_success') {
           setConnectionStatus('Authenticated');
           setError(null);
           return;
         }
-        
-        if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) {
-          return;
-        }
-        
+
+        if (data.ev !== 'XT' || !data.p || !data.v || !data.pair) return;
+
         processMessage(data);
       } catch (err) {
-        console.error('Error processing message:', err);
-        setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        console.error('Error in onMessage:', err);
+        setDebugInfo(`Message error: ${err instanceof Error ? err.message : 'Unknown'}`);
       }
     }
   });
@@ -84,62 +82,50 @@ const VolumeScanner: React.FC = () => {
 
   const calculateBaselineVolume = useCallback((ticker: string, currentVolume: number) => {
     const history = volumeHistory[ticker] || [];
+    updateVolumeHistory(ticker, currentVolume);
+
     if (history.length < 5) {
-      updateVolumeHistory(ticker, currentVolume);
       return currentVolume;
     }
-    
+
     const average = history.reduce((sum, vol) => sum + vol, 0) / history.length;
-    updateVolumeHistory(ticker, currentVolume);
     return average;
   }, [volumeHistory, updateVolumeHistory]);
 
   const processMessage = useCallback((data: any) => {
-    if (!data || typeof data !== 'object') return;
-
     try {
       const ticker = data.pair;
       const currentPrice = data.p;
       const currentVolume = data.v * data.p;
       const baselineVolume = calculateBaselineVolume(ticker, currentVolume);
       const relativeVolume = currentVolume / baselineVolume;
-      const previousHigh = dailyHighs[ticker];
 
-      console.log(`Processing ${ticker}:`, {
-        currentPrice,
+      let previousHigh = dailyHighs[ticker];
+      if (!previousHigh) {
+        previousHigh = currentPrice;
+        setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
+      }
+
+      console.log(`📊 ${ticker}`, {
+        price: currentPrice,
         previousHigh,
-        currentVolume,
+        relativeVolume,
         baselineVolume,
-        relativeVolume
+        volume: currentVolume
       });
 
       let shouldAddAlert = false;
       let alertType: 'volume' | 'high' = 'volume';
 
-      // Initialize daily high if not set
-      if (!previousHigh) {
-        setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
-        return;
-      }
-
-      if (relativeVolume >= 2) {
+      if (relativeVolume >= 1.5) {
         shouldAddAlert = true;
         alertType = 'volume';
-        console.log(`Volume alert triggered for ${ticker}:`, { relativeVolume });
       }
 
       if (currentPrice > previousHigh) {
         shouldAddAlert = true;
         alertType = 'high';
-        console.log(`New high alert triggered for ${ticker}:`, {
-          currentPrice,
-          previousHigh
-        });
-
-        setDailyHighs(prev => ({
-          ...prev,
-          [ticker]: currentPrice
-        }));
+        setDailyHighs(prev => ({ ...prev, [ticker]: currentPrice }));
       }
 
       if (shouldAddAlert) {
@@ -152,22 +138,18 @@ const VolumeScanner: React.FC = () => {
           type: alertType
         };
 
-        setAlerts(prev => {
-          const updated = [newAlert, ...prev].slice(0, 50);
-          console.log('New alert added:', newAlert);
-          return updated;
-        });
-
-        setDebugInfo(`Alert triggered: ${alertType} for ${ticker}`);
+        setAlerts(prev => [newAlert, ...prev].slice(0, 50));
+        setDebugInfo(`ALERT: ${alertType.toUpperCase()} on ${ticker}`);
+        console.log('🚨 Alert:', newAlert);
       }
 
       setBaselineVolumes(prev => ({
         ...prev,
-        [ticker]: baselineVolume,
+        [ticker]: baselineVolume
       }));
     } catch (err) {
-      console.error('Error processing message:', err);
-      setDebugInfo(`Error processing message: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      console.error('Process error:', err);
+      setDebugInfo(`Process error: ${err instanceof Error ? err.message : 'Unknown'}`);
     }
   }, [calculateBaselineVolume, dailyHighs]);
 
@@ -199,7 +181,7 @@ const VolumeScanner: React.FC = () => {
         <div className="flex items-center space-x-4">
           <button
             onClick={clearAlerts}
-            className="px-3 py-1 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors"
+            className="px-3 py-1 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md"
           >
             Clear Alerts
           </button>
@@ -211,11 +193,9 @@ const VolumeScanner: React.FC = () => {
       </div>
 
       {error && (
-        <div className="p-4 bg-red-900/20 border-b border-red-800">
-          <div className="flex items-center space-x-2 text-red-400">
-            <AlertTriangle size={16} />
-            <p className="text-sm">{error}</p>
-          </div>
+        <div className="p-4 bg-red-900/20 border-b border-red-800 text-sm text-red-400 flex items-center space-x-2">
+          <AlertTriangle size={16} />
+          <p>{error}</p>
         </div>
       )}
 
@@ -242,7 +222,7 @@ const VolumeScanner: React.FC = () => {
                   <div className="flex flex-col items-center space-y-2">
                     <AlertTriangle className="text-yellow-500" size={24} />
                     <p>Waiting for alerts...</p>
-                    <p className="text-sm text-gray-500">Monitoring for volume spikes and new daily highs</p>
+                    <p className="text-sm text-gray-500">Monitoring for volume spikes and new highs</p>
                   </div>
                 </td>
               </tr>
@@ -252,9 +232,7 @@ const VolumeScanner: React.FC = () => {
                   key={`${alert.ticker}-${alert.timestamp.getTime()}`}
                   className={`${index === 0 ? 'animate-pulse bg-green-900/20' : ''} hover:bg-gray-800/50`}
                 >
-                  <td className="px-4 py-3 text-sm text-gray-300">
-                    {alert.timestamp.toLocaleTimeString()}
-                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-300">{alert.timestamp.toLocaleTimeString()}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded text-xs font-medium ${
                       alert.type === 'volume' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
@@ -262,18 +240,10 @@ const VolumeScanner: React.FC = () => {
                       {alert.type === 'volume' ? 'Volume' : 'New High'}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <span className="font-mono font-medium text-white">{alert.ticker}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-mono text-white">{formatCurrency(alert.price)}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-mono text-green-400">{formatPercent(alert.changePercent)}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="font-mono text-blue-400">{alert.relativeVolume.toFixed(2)}x</span>
-                  </td>
+                  <td className="px-4 py-3 font-mono font-medium text-white">{alert.ticker}</td>
+                  <td className="px-4 py-3 font-mono text-white">{formatCurrency(alert.price)}</td>
+                  <td className="px-4 py-3 font-mono text-green-400">{formatPercent(alert.changePercent)}</td>
+                  <td className="px-4 py-3 font-mono text-blue-400">{alert.relativeVolume.toFixed(2)}x</td>
                 </tr>
               ))
             )}
