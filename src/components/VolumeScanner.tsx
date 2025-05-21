@@ -1,4 +1,4 @@
-// This file contains the full VolumeScanner.tsx with Telegram alerts added.
+// This file contains the full VolumeScanner.tsx with Telegram alerts and iframe-safe localStorage handling
 
 import React, { useState, useEffect, useCallback } from 'react';
 import useWebSocket from 'react-use-websocket';
@@ -165,15 +165,23 @@ const VolumeScanner: React.FC = () => {
   });
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+      }
+    } catch (err) {
+      console.warn('⚠️ localStorage blocked:', err);
     }
   }, [alerts]);
 
   const clearAlerts = () => {
     setAlerts([]);
-    if (typeof window !== 'undefined' && window.localStorage) {
-      localStorage.removeItem('volumeAlerts');
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.removeItem('volumeAlerts');
+      }
+    } catch (err) {
+      console.warn('⚠️ localStorage blocked:', err);
     }
     setDebugInfo('Alerts cleared');
   };
