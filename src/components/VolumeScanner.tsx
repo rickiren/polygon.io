@@ -2,15 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import useWebSocket from 'react-use-websocket';
 import { AlertTriangle, Volume2 } from 'lucide-react';
 import { formatCurrency, formatPercent } from '../services/polygonService';
+import { supabase } from '../lib/supabase';
+import type { Database } from '../types/supabase';
 
-interface Alert {
-  ticker: string;
-  price: number;
-  changePercent: number;
-  relativeVolume: number;
-  timestamp: Date;
-  type: 'volume' | 'high';
-}
+type Alert = Database['public']['Tables']['crypto_alerts']['Row'];
 
 const VolumeScanner: React.FC = () => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -25,6 +20,26 @@ const VolumeScanner: React.FC = () => {
   const API_KEY = 'UC7gcfqzz54FjpH_bwpgwPTTxf3tdU4q';
 
   const isBrowser = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined';
+
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('crypto_alerts')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+        setAlerts(data);
+      } catch (err) {
+        console.error('Error fetching alerts:', err);
+        setError('Failed to load alerts from database');
+      }
+    };
+
+    fetchAlerts();
+  }, []);
 
   const updateVolumeHistory = useCallback((ticker: string, volume: number) => {
     setVolumeHistory(prev => {
@@ -45,7 +60,7 @@ const VolumeScanner: React.FC = () => {
     return average;
   }, [volumeHistory, updateVolumeHistory]);
 
-  const processMessage = useCallback((data: any) => {
+  const processMessage = useCallback(async (data: any) => {
     try {
       const ticker = data.pair;
       const currentPrice = data.p;
@@ -82,18 +97,30 @@ const VolumeScanner: React.FC = () => {
       }
 
       if (shouldAddAlert) {
-        const newAlert: Alert = {
+        const newAlert = {
           ticker,
           price: currentPrice,
-          changePercent: data.dp || 0,
-          relativeVolume,
-          timestamp: new Date(),
-          type: alertType
+          change_percent: data.dp || 0,
+          relative_volume: relativeVolume,
+          alert_type: alertType,
+          created_at: new Date().toISOString()
         };
 
-        setAlerts(prev => [newAlert, ...prev].slice(0, 50));
-        setDebugInfo(`ALERT: ${alertType.toUpperCase()} on ${ticker}`);
-        console.log('🚨 Alert:', newAlert);
+        const { data: insertedAlert, error: insertError } = await supabase
+          .from('crypto_alerts')
+          .insert(newAlert)
+          .select()
+          .single();
+
+        if (insertError) {
+          throw insertError;
+        }
+
+        if (insertedAlert) {
+          setAlerts(prev => [insertedAlert, ...prev].slice(0, 50));
+          setDebugInfo(`ALERT: ${alertType.toUpperCase()} on ${ticker}`);
+          console.log('🚨 Alert:', insertedAlert);
+        }
       }
 
       setBaselineVolumes(prev => ({
@@ -155,33 +182,23 @@ const VolumeScanner: React.FC = () => {
 
   const { sendJsonMessage } = isBrowser
     ? useWebSocket(socketUrl, socketOptions)
-    : { sendJsonMessage: () => {} }; // dummy fallback
+    : { sendJsonMessage: () => {} };
 
-  // 🔧 Test alert to confirm UI is working
-  useEffect(() => {
-    const testAlert: Alert = {
-      ticker: 'X:TEST',
-      price: 12345,
-      changePercent: 4.2,
-      relativeVolume: 2.5,
-      timestamp: new Date(),
-      type: 'volume'
-    };
-    setAlerts(prev => [testAlert, ...prev]);
-  }, []);
+  const clearAlerts = async () => {
+    try {
+      const { error } = await supabase
+        .from('crypto_alerts')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('volumeAlerts', JSON.stringify(alerts));
+      if (error) throw error;
+      
+      setAlerts([]);
+      setDebugInfo('Alerts cleared from database');
+    } catch (err) {
+      console.error('Error clearing alerts:', err);
+      setError('Failed to clear alerts from database');
     }
-  }, [alerts]);
-
-  const clearAlerts = () => {
-    setAlerts([]);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('volumeAlerts');
-    }
-    setDebugInfo('Alerts cleared');
   };
 
   const connectionStatusColor = {
@@ -250,21 +267,23 @@ const VolumeScanner: React.FC = () => {
             ) : (
               alerts.map((alert, index) => (
                 <tr
-                  key={`${alert.ticker}-${alert.timestamp.getTime()}`}
+                  key={alert.id}
                   className={`${index === 0 ? 'animate-pulse bg-green-900/20' : ''} hover:bg-gray-800/50`}
                 >
-                  <td className="px-4 py-3 text-sm text-gray-300">{alert.timestamp.toLocaleTimeString()}</td>
+                  <td className="px-4 py-3 text-sm text-gray-300">
+                    {new Date(alert.created_at).toLocaleTimeString()}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      alert.type === 'volume' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
+                      alert.alert_type === 'volume' ? 'bg-blue-900/50 text-blue-400' : 'bg-green-900/50 text-green-400'
                     }`}>
-                      {alert.type === 'volume' ? 'Volume' : 'New High'}
+                      {alert.alert_type === 'volume' ? 'Volume' : 'New High'}
                     </span>
                   </td>
                   <td className="px-4 py-3 font-mono font-medium text-white">{alert.ticker}</td>
                   <td className="px-4 py-3 font-mono text-white">{formatCurrency(alert.price)}</td>
-                  <td className="px-4 py-3 font-mono text-green-400">{formatPercent(alert.changePercent)}</td>
-                  <td className="px-4 py-3 font-mono text-blue-400">{alert.relativeVolume.toFixed(2)}x</td>
+                  <td className="px-4 py-3 font-mono text-green-400">{formatPercent(alert.change_percent)}</td>
+                  <td className="px-4 py-3 font-mono text-blue-400">{alert.relative_volume.toFixed(2)}x</td>
                 </tr>
               ))
             )}
