@@ -70,7 +70,7 @@ const VolumeScanner: React.FC = () => {
       let shouldAddAlert = false;
       let alertType: 'volume' | 'high' = 'volume';
 
-      if (relativeVolume >= 1.5) {
+      if (relativeVolume >= 1.1) {
         shouldAddAlert = true;
         alertType = 'volume';
       }
@@ -153,22 +153,13 @@ const VolumeScanner: React.FC = () => {
     }
   };
 
-  const { sendJsonMessage } = isBrowser
-    ? useWebSocket(socketUrl, socketOptions)
-    : { sendJsonMessage: () => {} }; // dummy fallback
+  const socketHooks = isBrowser ? useWebSocket(socketUrl, socketOptions) : {
+    sendJsonMessage: () => {},
+    lastJsonMessage: null,
+    readyState: null
+  };
 
-  // 🔧 Test alert to confirm UI is working
-  useEffect(() => {
-    const testAlert: Alert = {
-      ticker: 'X:TEST',
-      price: 12345,
-      changePercent: 4.2,
-      relativeVolume: 2.5,
-      timestamp: new Date(),
-      type: 'volume'
-    };
-    setAlerts(prev => [testAlert, ...prev]);
-  }, []);
+  const { sendJsonMessage } = socketHooks;
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -250,7 +241,7 @@ const VolumeScanner: React.FC = () => {
             ) : (
               alerts.map((alert, index) => (
                 <tr
-                  key={`${alert.ticker}-${alert.timestamp.getTime()}`}
+                  key={`${alert.ticker}-${alert.timestamp.getTime()}-${index}`}
                   className={`${index === 0 ? 'animate-pulse bg-green-900/20' : ''} hover:bg-gray-800/50`}
                 >
                   <td className="px-4 py-3 text-sm text-gray-300">{alert.timestamp.toLocaleTimeString()}</td>
