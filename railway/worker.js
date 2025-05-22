@@ -1,23 +1,23 @@
-// railway/worker.js
-import WebSocket from 'ws';
+import { w3cwebsocket as W3CWebSocket } from 'websocket';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
-// Set up Supabase client
+// Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 const API_KEY = process.env.POLYGON_API_KEY;
+const SOCKET_URL = 'wss://socket.polygon.io/crypto';
+const PAIR = 'XT.BTC-USD';
+
+console.log('🚀 Starting official Polygon WebSocket client...');
 
 let volumeHistory = {};
 let dailyHighs = {};
-
-console.log('🚀 Starting crypto scanner worker...');
 
 function updateVolumeHistory(ticker, volume) {
   const history = [...(volumeHistory[ticker] || []), volume].slice(-10);
@@ -32,106 +32,77 @@ function calculateBaselineVolume(ticker, currentVolume) {
 }
 
 async function processMessage(data) {
-  try {
-    if (!Array.isArray(data)) return;
+  if (!Array.isArray(data)) return;
 
-    for (const item of data) {
-      if (item.ev !== 'XT' || !item.p || !item.v || !item.pair) continue;
+  for (const item of data) {
+    if (item.ev !== 'XT' || !item.p || !item.v || !item.pair) continue;
 
-      const ticker = item.pair;
-      const currentPrice = item.p;
-      const currentVolume = item.v * item.p;
-      const baselineVolume = calculateBaselineVolume(ticker, currentVolume);
-      const relativeVolume = currentVolume / baselineVolume;
-      const previousHigh = dailyHighs[ticker] || currentPrice;
+    const ticker = item.pair;
+    const currentPrice = item.p;
+    const currentVolume = item.v * item.p;
+    const baselineVolume = calculateBaselineVolume(ticker, currentVolume);
+    const relativeVolume = currentVolume / baselineVolume;
+    const previousHigh = dailyHighs[ticker] || currentPrice;
 
-      let shouldAddAlert = false;
-      let alertType = 'volume';
+    let shouldAddAlert = false;
+    let alertType = 'volume';
 
-      if (relativeVolume >= 1.5) {
-        shouldAddAlert = true;
-        alertType = 'volume';
-      }
-
-      if (currentPrice > previousHigh) {
-        shouldAddAlert = true;
-        alertType = 'high';
-        dailyHighs[ticker] = currentPrice;
-      }
-
-      if (shouldAddAlert) {
-        const alert = {
-          ticker,
-          price: currentPrice,
-          change_percent: item.dp || 0,
-          relative_volume: relativeVolume,
-          alert_type: alertType,
-          created_at: new Date().toISOString()
-        };
-
-        await supabase.from('crypto_alerts').insert(alert);
-        console.log(`🚨 Alert saved: ${ticker} (${alertType})`);
-      }
+    if (relativeVolume >= 1.5) {
+      shouldAddAlert = true;
+      alertType = 'volume';
     }
-  } catch (err) {
-    console.error('❌ Error processing message:', err);
+
+    if (currentPrice > previousHigh) {
+      shouldAddAlert = true;
+      alertType = 'high';
+      dailyHighs[ticker] = currentPrice;
+    }
+
+    if (shouldAddAlert) {
+      const alert = {
+        ticker,
+        price: currentPrice,
+        change_percent: item.dp || 0,
+        relative_volume: relativeVolume,
+        alert_type: alertType,
+        created_at: new Date().toISOString(),
+      };
+
+      await supabase.from('crypto_alerts').insert(alert);
+      console.log(`🚨 Alert saved: ${ticker} (${alertType})`);
+    }
   }
 }
 
-function connectWebSocket() {
-  console.log('🧠 Connecting to Polygon WebSocket...');
-  const ws = new WebSocket('wss://socket.polygon.io/crypto');
+function startClient() {
+  const ws = new W3CWebSocket(SOCKET_URL);
 
-  let pingInterval;
+  ws.onopen = () => {
+    console.log('✅ WebSocket Opened');
+    ws.send(JSON.stringify({ action: 'auth', params: API_KEY }));
 
-  ws.on('open', () => {
-    console.log('✅ WebSocket Connected');
-
-    // Auth
-    ws.send(JSON.stringify({
-      action: 'auth',
-      params: API_KEY
-    }));
-
-    // Subscribe after 1s delay
     setTimeout(() => {
-      console.log('📩 Subscribing to: XT.BTC-USD');
-      ws.send(JSON.stringify({
-        action: 'subscribe',
-        params: 'XT.BTC-USD'
-      }));
+      ws.send(JSON.stringify({ action: 'subscribe', params: PAIR }));
+      console.log(`📩 Subscribed to ${PAIR}`);
     }, 1000);
+  };
 
-    // Keepalive ping every 30s
-    pingInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.ping();
-        console.log('📡 Sent ping to keep alive');
-      }
-    }, 30000);
-  });
-
-  ws.on('message', (data) => {
+  ws.onmessage = (event) => {
     try {
-      const parsed = JSON.parse(data.toString());
-      processMessage(parsed);
+      const data = JSON.parse(event.data);
+      processMessage(data);
     } catch (err) {
-      console.error('❌ Error parsing message:', err);
+      console.error('❌ Failed to parse message:', err.message);
     }
-  });
+  };
 
-  ws.on('close', (code, reason) => {
-    console.log(`🔁 WebSocket Disconnected. Code: ${code}, Reason: ${reason?.toString() || 'No reason'}`);
-    clearInterval(pingInterval);
+  ws.onerror = (err) => {
+    console.error('❌ WebSocket error:', err.message || err);
+  };
 
-    // TEMPORARILY DISABLE RECONNECT FOR DEBUGGING
-    // setTimeout(connectWebSocket, 5000);
-  });
-
-  ws.on('error', (err) => {
-    console.error('❌ WebSocket Error:', err.message);
-    // Do not force close — let 'close' handle it
-  });
+  ws.onclose = (event) => {
+    console.log(`🔁 WebSocket closed. Code: ${event.code}, Reason: ${event.reason}`);
+  };
 }
 
-connectWebSocket();
+startClient();
