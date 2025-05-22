@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
+// Load environment variables
 dotenv.config();
 
 // Set up Supabase client
@@ -80,17 +81,28 @@ async function processMessage(data) {
 function connectWebSocket() {
   console.log('🧠 Connecting to Polygon WebSocket...');
   const ws = new WebSocket('wss://socket.polygon.io/crypto');
+
   let pingInterval;
 
   ws.on('open', () => {
     console.log('✅ WebSocket Connected');
-    ws.send(JSON.stringify({ action: 'auth', params: API_KEY }));
 
+    // Auth
+    ws.send(JSON.stringify({
+      action: 'auth',
+      params: API_KEY
+    }));
+
+    // Subscribe after 1s delay
     setTimeout(() => {
-      console.log('📩 Subscribing to BTC & ETH only for testing');
-      ws.send(JSON.stringify({ action: 'subscribe', params: 'XT.BTC-USD,XT.ETH-USD' }));
-    }, 300);
+      console.log('📩 Subscribing to: XT.BTC-USD');
+      ws.send(JSON.stringify({
+        action: 'subscribe',
+        params: 'XT.BTC-USD'
+      }));
+    }, 1000);
 
+    // Keepalive ping every 30s
     pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.ping();
@@ -100,7 +112,6 @@ function connectWebSocket() {
   });
 
   ws.on('message', (data) => {
-    console.log('📨 Message received');
     try {
       const parsed = JSON.parse(data.toString());
       processMessage(parsed);
@@ -110,14 +121,16 @@ function connectWebSocket() {
   });
 
   ws.on('close', (code, reason) => {
-    console.log(`🔁 WebSocket Disconnected. Code: ${code}, Reason: ${reason.toString()}`);
+    console.log(`🔁 WebSocket Disconnected. Code: ${code}, Reason: ${reason?.toString() || 'No reason'}`);
     clearInterval(pingInterval);
-    setTimeout(connectWebSocket, 5000);
+
+    // TEMPORARILY DISABLE RECONNECT FOR DEBUGGING
+    // setTimeout(connectWebSocket, 5000);
   });
 
   ws.on('error', (err) => {
     console.error('❌ WebSocket Error:', err.message);
-    ws.close();
+    // Do not force close — let 'close' handle it
   });
 }
 
